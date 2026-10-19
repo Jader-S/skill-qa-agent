@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "默认权限：前端已自包含持久化与导出，暂无额外原生权限需求。后续接入原生能力时在此追加。",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
