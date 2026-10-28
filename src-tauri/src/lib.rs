@@ -1,11 +1,20 @@
-// Tauri v2 入口。MVP 阶段前端已自包含（localStorage 持久化 + 浏览器下载导出），
-// 故后端暂无自定义命令。后续接入 SQLite / 写入 Obsidian vault / 语音 sidecar 时，
-// 在此增加 invoke_handler 命令即可，无需改动前端结构（前端已通过 storage / export 适配器预留）。
+mod db;
+mod secrets;
 
+/// 桌面壳入口。课程数据走本机 SQLite 文件，API Key 走系统凭据管理器。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![])
+        .manage(db::DbState::default())
+        .invoke_handler(tauri::generate_handler![
+            db::db_open,
+            db::db_path,
+            db::db_run,
+            db::db_query,
+            secrets::secret_get,
+            secrets::secret_set,
+            secrets::secret_delete,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

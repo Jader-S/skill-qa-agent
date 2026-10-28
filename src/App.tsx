@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from './store/useStore'
 import { getLastBackupAt } from './lib/autoBackup'
+import { isDesktop } from './lib/desktop'
 import CourseTree from './features/courses/CourseTree'
 import KnowledgeView from './features/knowledge/KnowledgeView'
 import SelfTestView from './features/selfTest/SelfTestView'
@@ -120,7 +121,11 @@ export default function App() {
             <div
               className="tab"
               style={{ marginLeft: 'auto', color: 'var(--warn)', borderColor: 'var(--warn)' }}
-              title="数据只存在浏览器本地库中，清站点数据会全部丢失。点击前往设置备份。"
+              title={
+                isDesktop()
+                  ? '超过 7 天没有做 JSON 备份。数据库文件还在，但建议再导出一份。'
+                  : '数据只存在浏览器本地库中，清站点数据会全部丢失。点击前往设置备份。'
+              }
               onClick={() => setTab('settings')}
             >
               数据未备份

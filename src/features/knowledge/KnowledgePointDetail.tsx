@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { useStore } from '../../store/useStore'
 import { optimizeOne } from '../../lib/batchOptimize'
 import type { KnowledgePoint } from '../../types'
+import MarkdownView from './MarkdownView'
 
 /**
- * 知识点详情面板（模态）：
- * - 原文（笔记内容）与 AI 补充与拓展为两个独立区块，各自带标识；原文永不被 AI 改动。
- * - 可编辑标题 / 标签 / 原文 / AI 内容，并单独「清除 AI 补充」或「重新生成」。
+ * 知识点详情：默认是一篇渲染后的文档。
+ * 原文在前，AI 补充接在同一篇里，只用一行提示标出，不再分成上下两块。
+ * 存储仍分开：AI 不改写原文。
  */
 export default function KnowledgePointDetail({
   kp,
@@ -19,6 +20,7 @@ export default function KnowledgePointDetail({
   const optimizeKP = useStore((s) => s.optimizeKP)
   const settings = useStore((s) => s.settings)
 
+  const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState(kp.title)
   const [tags, setTags] = useState(kp.tags.join(', '))
   const [content, setContent] = useState(kp.content)
@@ -26,8 +28,8 @@ export default function KnowledgePointDetail({
   const [aiBusy, setAiBusy] = useState(false)
   const [aiStream, setAiStream] = useState('')
 
-  // 切换知识点时同步本地状态
   useEffect(() => {
+    setEditing(false)
     setTitle(kp.title)
     setTags(kp.tags.join(', '))
     setContent(kp.content)
@@ -35,17 +37,27 @@ export default function KnowledgePointDetail({
     setAiStream('')
   }, [kp.id])
 
+  const resetDraft = () => {
+    setTitle(kp.title)
+    setTags(kp.tags.join(', '))
+    setContent(kp.content)
+    setAi(kp.aiContent ?? '')
+  }
+
   const save = () => {
     updateKP(kp.id, {
       title: title.trim() || kp.title,
       content: content.trim(),
       tags: tags.split(/[,，\s]+/).filter(Boolean),
     })
+    const nextAi = ai.trim()
+    if (nextAi !== (kp.aiContent ?? '').trim()) optimizeKP(kp.id, nextAi)
+    setEditing(false)
   }
 
   const runOptimize = async () => {
     setAiBusy(true)
-    setAiStream('AI 补充生成中…')
+    setAiStream('')
     try {
       const text = await optimizeOne(
         settings,
@@ -63,45 +75,98 @@ export default function KnowledgePointDetail({
     }
   }
 
+  const aiText = aiStream || ai
+  const showAi = editing || !!aiText
+
   return (
     <div className="modal-mask" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="row" style={{ marginBottom: 10 }}>
-          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="知识点标题" />
-          <button className="ghost" onClick={onClose}>
-            关闭
-          </button>
-        </div>
-        <input
-          value={tags}
-          onChange={(e) => setTags(e.target.value)}
-          placeholder="标签，逗号分隔"
-          style={{ marginBottom: 10 }}
-        />
+      <div className="modal modal-doc" onClick={(e) => e.stopPropagation()}>
+        <header className="doc-head">
+          <div className="doc-head-main">
+            {editing ? (
+              <>
+                <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="知识点标题" />
+                <input
+                  value={tags}
+                  onChange={(e) => setTags(e.target.value)}
+                  placeholder="标签，逗号分隔"
+                  style={{ marginTop: 8 }}
+                />
+              </>
+            ) : (
+              <>
+                <h2 className="doc-title">{kp.title}</h2>
+                {kp.tags.length > 0 && (
+                  <div className="doc-tags">
+                    {kp.tags.map((t) => (
+                      <span key={t} className="tag">#{t}</span>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          <button className="ghost" onClick={onClose}>关闭</button>
+        </header>
 
-        <div className="block-label">
-          <span className="badge ok">笔记原文</span>
-          <span className="muted">（AI 优化不会改动此部分）</span>
-        </div>
-        <textarea
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          style={{ minHeight: 180, marginBottom: 14 }}
-        />
-
-        <div className="block-label">
-          <span className="badge fix">AI 补充与拓展</span>
-          {kp.aiOptimizedAt && (
-            <span className="muted">
-              生成于 {new Date(kp.aiOptimizedAt).toLocaleString()}
-            </span>
+        <div className="doc-body">
+          {editing ? (
+            <textarea
+              className="doc-source"
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+            />
+          ) : (
+            <MarkdownView text={content} />
           )}
-          <div className="spacer" />
+
+          {showAi && (
+            <div className="md-ai">
+              <div className="md-ai-mark">
+                AI 补充
+                {kp.aiOptimizedAt && !aiStream && (
+                  <span className="muted">{new Date(kp.aiOptimizedAt).toLocaleString()}</span>
+                )}
+              </div>
+              {editing ? (
+                <textarea
+                  className="doc-source doc-source-ai"
+                  value={aiText}
+                  onChange={(e) => setAi(e.target.value)}
+                  placeholder="生成后会接在原文后面。也可以直接在这里写。"
+                />
+              ) : (
+                <MarkdownView text={aiText} />
+              )}
+            </div>
+          )}
+        </div>
+
+        <footer className="doc-foot">
+          {editing ? (
+            <>
+              <button className="primary" onClick={save}>保存</button>
+              <button
+                className="ghost"
+                onClick={() => {
+                  resetDraft()
+                  setEditing(false)
+                }}
+              >
+                取消
+              </button>
+            </>
+          ) : (
+            <button onClick={() => setEditing(true)}>编辑</button>
+          )}
+          <button className="accent-2" onClick={runOptimize} disabled={aiBusy || !content.trim()}>
+            {aiBusy ? '生成中…' : ai ? '重新生成 AI 补充' : 'AI 补充'}
+          </button>
           {ai && (
             <button
               className="mini danger"
               onClick={() => {
-                if (confirm('清除 AI 补充内容？')) {
+                if (confirm('清除 AI 补充？原文会保留。')) {
                   setAi('')
                   optimizeKP(kp.id, '')
                 }
@@ -110,25 +175,8 @@ export default function KnowledgePointDetail({
               清除 AI 补充
             </button>
           )}
-        </div>
-        <textarea
-          value={aiStream || ai}
-          onChange={(e) => setAi(e.target.value)}
-          placeholder="尚未 AI 优化。点击下方按钮，基于笔记原文生成补充与拓展。"
-          style={{ minHeight: 140, marginBottom: 10 }}
-        />
-
-        <div className="row">
-          <button className="primary" onClick={save}>
-            保存修改
-          </button>
-          <button className="accent-2" onClick={runOptimize} disabled={aiBusy || !content.trim()}>
-            {aiBusy ? '生成中…' : ai ? '重新生成 AI 补充' : 'AI 优化补充'}
-          </button>
-          {aiStream && aiStream !== ai && (
-            <span className="streaming" style={{ alignSelf: 'center' }}>AI 流式输出中…</span>
-          )}
-        </div>
+          {aiBusy && <span className="muted">正在写入本文档…</span>}
+        </footer>
       </div>
     </div>
   )

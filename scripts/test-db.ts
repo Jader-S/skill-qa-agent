@@ -25,10 +25,10 @@ async function main() {
   const SQL = await initSqlJs()
   const db = new SQL.Database()
 
-  schema.migrate(db)
+  await schema.migrate(db)
 
   // 空库读取应为空 + 默认配置
-  const empty = schema.loadAll(db)
+  const empty = await schema.loadAll(db)
   assert(empty.courses.length === 0 && empty.knowledgePoints.length === 0, '空库返回空数组')
   assert(empty.settings.provider === 'deepseek' && empty.voice.lang === 'zh-CN', '空库返回默认 settings/voice')
 
@@ -136,9 +136,9 @@ async function main() {
     },
   }
 
-  schema.syncAll(db, state)
+  await schema.syncAll(db, state)
 
-  const loaded = schema.loadAll(db)
+  const loaded = await schema.loadAll(db)
   assert(loaded.courses.length === 1 && loaded.courses[0].id === 'c1', 'courses 往返一致')
   assert(loaded.knowledgePoints.length === 1, 'knowledgePoints 往返数量一致')
   assert(
@@ -165,8 +165,8 @@ async function main() {
   )
 
   // 重置清空
-  schema.resetDb(db)
-  const afterReset = schema.loadAll(db)
+  await schema.resetDb(db)
+  const afterReset = await schema.loadAll(db)
   assert(
     afterReset.courses.length === 0 &&
       afterReset.questions.length === 0 &&
@@ -187,14 +187,14 @@ async function main() {
     voice: { lang: 'zh-CN' },
   }
   mem['skill-qa-agent:v1'] = JSON.stringify(legacy)
-  schema.migrateFromLocalStorage(db)
-  const migrated = schema.loadAll(db)
+  await schema.migrateFromLocalStorage(db)
+  const migrated = await schema.loadAll(db)
   assert(migrated.courses.length === 1 && migrated.courses[0].id === 'lc1', '旧 localStorage 已迁移入库')
   assert(!('skill-qa-agent:v1' in mem), '迁移后旧键已删除')
   // 二次迁移不应重复（DB 已有数据时跳过）
   mem['skill-qa-agent:v1'] = JSON.stringify(legacy)
-  schema.migrateFromLocalStorage(db)
-  assert(schema.loadAll(db).courses.length === 1, 'DB 非空时迁移幂等（不重复导入）')
+  await schema.migrateFromLocalStorage(db)
+  assert((await schema.loadAll(db)).courses.length === 1, 'DB 非空时迁移幂等（不重复导入）')
   assert(!('skill-qa-agent:v1' in mem), '幂等迁移同样清除旧键')
 
   console.log('\nAll dbSchema tests passed ✅')

@@ -15,6 +15,7 @@ import {
   type SnapshotMeta,
 } from '../../lib/autoBackup'
 import type { LLMConfig } from '../../types'
+import { ensureDbPath, getCachedDbPath, isDesktop } from '../../lib/desktop'
 
 const STALE_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -35,6 +36,8 @@ export default function SettingsView() {
   const setVoice = useStore((s) => s.setVoice)
   const fileRef = useRef<HTMLInputElement>(null)
   const [msg, setMsg] = useState<string>('')
+  const desktop = isDesktop()
+  const [dbPath, setDbPath] = useState<string | null>(() => getCachedDbPath())
 
   // 自动备份面板
   const [lastAt, setLastAt] = useState<number | null>(() => getLastBackupAt())
@@ -46,8 +49,9 @@ export default function SettingsView() {
     void (async () => {
       setDirName(await getDirName())
       setSnaps(await listSnapshots())
+      if (desktop) setDbPath(await ensureDbPath())
     })()
-  }, [])
+  }, [desktop])
 
   const stale = !lastAt || Date.now() - lastAt > STALE_MS
 
@@ -168,13 +172,15 @@ export default function SettingsView() {
 
         <div className="muted">
           当前：<b>{settings.useMock ? 'Mock 离线模式' : `${preset?.label} · ${settings.model || preset?.model}`}</b>
-          {settings.apiKey && !settings.useMock && ' · 已接入 API Key（默认来自 .env.local）'}
+          {settings.apiKey && !settings.useMock && (desktop ? ' · 已接入 API Key（存在 Windows 凭据管理器）' : ' · 已接入 API Key（默认来自 .env.local）')}
         </div>
       </div>
 
       <div className="panel">
         <div className="muted" style={{ marginBottom: 8 }}>
-          数据管理：所有课程/知识点/题目/答案均保存在本地浏览器（Tauri 下为本地存储）。
+          {desktop
+            ? `桌面版数据库：${dbPath || '正在打开…'}。API Key 存在 Windows 凭据管理器，不会写进这个文件。这里的数据和浏览器里的库是分开的；要把网页里的资料带过来，请先在浏览器导出整库备份，再于下方导入。`
+            : '数据管理：所有课程/知识点/题目/答案均保存在本地浏览器。'}
         </div>
         <button
           className="danger"
@@ -188,8 +194,9 @@ export default function SettingsView() {
 
       <div className="panel">
         <div className="muted" style={{ marginBottom: 10 }}>
-          自动备份：数据只存在浏览器本地库里，清站点数据会全部丢失。系统会自动留存本地快照（最近 5 份）；
-          连接文件夹后，还会把备份 JSON 真正写进磁盘。距上次备份超 10 分钟且有数据变更时自动触发。
+          {desktop
+            ? '自动备份：课程数据已经写在上面的数据库文件里。这里仍会留本地 JSON 快照（最近 5 份），连接文件夹后还会按天抄一份到磁盘。距上次备份超 10 分钟且有数据变更时自动触发。'
+            : '自动备份：数据只存在浏览器本地库里，清站点数据会全部丢失。系统会自动留存本地快照（最近 5 份）；连接文件夹后，还会把备份 JSON 真正写进磁盘。距上次备份超 10 分钟且有数据变更时自动触发。'}
         </div>
 
         <div className="row" style={{ marginBottom: 8 }}>

@@ -7,7 +7,8 @@ import { buildFolderImport, type FolderImportPlan } from '../../lib/importFolder
 import { optimizeOne } from '../../lib/batchOptimize'
 import KnowledgePointDetail from './KnowledgePointDetail'
 import ChapterOptimize from './ChapterOptimize'
-import type { KnowledgePoint } from '../../types'
+import MarkdownView from './MarkdownView'
+import type { Course, KnowledgePoint } from '../../types'
 
 export default function KnowledgeView({
   courseId,
@@ -240,10 +241,11 @@ export default function KnowledgeView({
       {plan && (
         <div className="panel" style={{ marginTop: 12, borderColor: 'var(--accent)' }}>
           <div style={{ marginBottom: 8 }}>
-            将导入：<b>{plan.stats.courseCount}</b> 门课程（来自文件夹目录）、
+            将导入：<b>{plan.stats.courseCount}</b> 个目录（文件夹结构，并按文件与知识点关联拆成可嵌套章节）、
             <b>{plan.stats.kpCount}</b> 个知识点（来自 {plan.stats.fileCount} 个文件）
             {plan.stats.skipped > 0 && <>；跳过 {plan.stats.skipped} 个不支持/忽略的文件</>}
           </div>
+          <FolderPlanTree courses={plan.courses} />
           <label className="row" style={{ marginBottom: 10, cursor: 'pointer' }}>
             <input type="checkbox" checked={mountUnder} onChange={(e) => setMountUnder(e.target.checked)} />
             <span>挂载到当前课程「{course?.name}」下（取消则作为顶级课程）</span>
@@ -272,6 +274,37 @@ export default function KnowledgeView({
       </div>
 
       {detailKp && <KnowledgePointDetail kp={detailKp} onClose={() => setDetailId(null)} />}
+    </div>
+  )
+}
+
+function FolderPlanTree({ courses }: { courses: Course[] }) {
+  const ids = new Set(courses.map((c) => c.id))
+  const byParent = new Map<string | null, Course[]>()
+  for (const c of courses) {
+    const p = c.parentId && ids.has(c.parentId) ? c.parentId : null
+    const list = byParent.get(p) ?? []
+    list.push(c)
+    byParent.set(p, list)
+  }
+  for (const list of byParent.values()) list.sort((a, b) => a.sort - b.sort)
+  const rows: { name: string; depth: number }[] = []
+  const walk = (parent: string | null, depth: number) => {
+    for (const c of byParent.get(parent) ?? []) {
+      rows.push({ name: c.name, depth })
+      walk(c.id, depth + 1)
+    }
+  }
+  walk(null, 0)
+  const shown = rows.slice(0, 40)
+  return (
+    <div className="muted" style={{ marginBottom: 10, fontSize: 12, lineHeight: 1.7 }}>
+      {shown.map((row, i) => (
+        <div key={i} style={{ paddingLeft: row.depth * 14 }}>
+          {row.name}
+        </div>
+      ))}
+      {rows.length > shown.length && <div>… 另有 {rows.length - shown.length} 个目录</div>}
     </div>
   )
 }
@@ -336,11 +369,8 @@ function KPCard({
           删除
         </button>
       </div>
-      <div className="muted" style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>
-        {kp.content.slice(0, 200)}
-        {kp.content.length > 200 ? '…' : ''}
-      </div>
-      <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>点击查看详情 / 编辑 / AI 优化</div>
+      <MarkdownView className="md-preview" text={kp.content.length > 700 ? kp.content.slice(0, 700) : kp.content} />
+      <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>点击查看详情</div>
     </div>
   )
 }

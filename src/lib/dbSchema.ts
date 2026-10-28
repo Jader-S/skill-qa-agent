@@ -15,7 +15,7 @@ import type {
 
 /**
  * 规范化表结构（纯 SQL，不依赖任何引擎 —— 浏览器 sql.js / Node / Tauri 都可复用）。
- * 一个 sql.js Database 对象（含 run / exec 方法）即可驱动。
+ * run / exec 可以是同步（sql.js）或返回 Promise（桌面原生 SQLite）。调用方一律 await。
  *
  * 设计要点：
  * - 每个业务实体一张表，数组/对象字段（tags、options、history…）以 JSON 文本存储。
@@ -96,21 +96,21 @@ CREATE TABLE IF NOT EXISTS kv (
 );
 `
 
-export function migrate(db: any): void {
-  db.run(SCHEMA)
+export async function migrate(db: any): Promise<void> {
+  await db.run(SCHEMA)
   // 旧库可能没有 ai_content 列，补齐（不影响已有数据）。
-  const cols = db.exec('PRAGMA table_info(knowledge_points)')
+  const cols = await db.exec('PRAGMA table_info(knowledge_points)')
   const has = (name: string) =>
     cols.length > 0 && cols[0].values.some((v: any[]) => v[1] === name)
   if (!has('ai_content'))
-    db.run('ALTER TABLE knowledge_points ADD COLUMN ai_content TEXT NOT NULL DEFAULT \'\'')
+    await db.run('ALTER TABLE knowledge_points ADD COLUMN ai_content TEXT NOT NULL DEFAULT \'\'')
   if (!has('ai_optimized_at'))
-    db.run('ALTER TABLE knowledge_points ADD COLUMN ai_optimized_at INTEGER')
+    await db.run('ALTER TABLE knowledge_points ADD COLUMN ai_optimized_at INTEGER')
 }
 
 /** 把 sql.js exec 的结果集转成行对象数组。 */
-function rows(db: any, sql: string): Record<string, any>[] {
-  const res = db.exec(sql)
+async function rows(db: any, sql: string): Promise<Record<string, any>[]> {
+  const res = await db.exec(sql)
   if (!res.length) return []
   const { columns, values } = res[0]
   return values.map((v: any[]) => {
@@ -130,20 +130,20 @@ function jsonOr<T>(s: any, fallback: T): T {
 }
 
 /** 把整个 AppState 全量写入各表（事务内清空+插入）。单列配置走 kv。 */
-export function syncAll(db: any, state: AppState): void {
-  db.run('BEGIN')
+export async function syncAll(db: any, state: AppState): Promise<void> {
+  await db.run('BEGIN')
   try {
-    db.run('DELETE FROM courses')
+    await db.run('DELETE FROM courses')
     for (const c of state.courses) {
-      db.run(
+      await db.run(
         'INSERT INTO courses (id,name,parent_id,sort,created_at) VALUES (?,?,?,?,?)',
         [c.id, c.name, c.parentId, c.sort, c.createdAt],
       )
     }
 
-    db.run('DELETE FROM knowledge_points')
+    await db.run('DELETE FROM knowledge_points')
     for (const k of state.knowledgePoints) {
-      db.run(
+      await db.run(
         'INSERT INTO knowledge_points (id,course_id,title,content,tags,source_type,source_name,created_at,updated_at,embedding,ai_content,ai_optimized_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
         [
           k.id,
@@ -162,9 +162,9 @@ export function syncAll(db: any, state: AppState): void {
       )
     }
 
-    db.run('DELETE FROM questions')
+    await db.run('DELETE FROM questions')
     for (const q of state.questions) {
-      db.run(
+      await db.run(
         'INSERT INTO questions (id,kp_id,type,stem,options,model_answer,difficulty,explanation,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
         [
           q.id,
@@ -180,9 +180,9 @@ export function syncAll(db: any, state: AppState): void {
       )
     }
 
-    db.run('DELETE FROM answers')
+    await db.run('DELETE FROM answers')
     for (const a of state.answers) {
-      db.run(
+      await db.run(
         'INSERT INTO answers (id,question_id,user_answer,score,correct,feedback,weak_points,created_at) VALUES (?,?,?,?,?,?,?,?)',
         [
           a.id,
@@ -197,17 +197,17 @@ export function syncAll(db: any, state: AppState): void {
       )
     }
 
-    db.run('DELETE FROM corrections')
+    await db.run('DELETE FROM corrections')
     for (const c of state.corrections) {
-      db.run(
+      await db.run(
         'INSERT INTO corrections (id,target_type,target_id,field,original,corrected,created_at) VALUES (?,?,?,?,?,?,?)',
         [c.id, c.targetType, c.targetId, c.field, c.original, c.corrected, c.createdAt],
       )
     }
 
-    db.run('DELETE FROM interview_sessions')
+    await db.run('DELETE FROM interview_sessions')
     for (const s of state.interviewSessions) {
-      db.run(
+      await db.run(
         'INSERT INTO interview_sessions (id,role,scope_name,rounds,history,report,created_at) VALUES (?,?,?,?,?,?,?)',
         [
           s.id,
@@ -221,27 +221,27 @@ export function syncAll(db: any, state: AppState): void {
       )
     }
 
-    db.run('DELETE FROM kv')
-    db.run('INSERT INTO kv (key,value) VALUES (?,?)', ['settings', JSON.stringify(state.settings)])
-    db.run('INSERT INTO kv (key,value) VALUES (?,?)', ['voice', JSON.stringify(state.voice)])
+    await db.run('DELETE FROM kv')
+    await db.run('INSERT INTO kv (key,value) VALUES (?,?)', ['settings', JSON.stringify(state.settings)])
+    await db.run('INSERT INTO kv (key,value) VALUES (?,?)', ['voice', JSON.stringify(state.voice)])
     // 进行中的面试快照：有则存，回到配置页即清空（见 useStore.setLiveInterview）。
     if (state.liveInterview) {
-      db.run('INSERT INTO kv (key,value) VALUES (?,?)', [
+      await db.run('INSERT INTO kv (key,value) VALUES (?,?)', [
         'live_interview',
         JSON.stringify(state.liveInterview),
       ])
     }
 
-    db.run('COMMIT')
+    await db.run('COMMIT')
   } catch (e) {
-    db.run('ROLLBACK')
+    await db.run('ROLLBACK')
     throw e
   }
 }
 
 /** 从各表读回完整 AppState（空库返回空数组 + 默认配置）。 */
-export function loadAll(db: any): AppState {
-  const courses: Course[] = rows(db, 'SELECT * FROM courses').map((r) => ({
+export async function loadAll(db: any): Promise<AppState> {
+  const courses: Course[] = (await rows(db, 'SELECT * FROM courses')).map((r) => ({
     id: r.id,
     name: r.name,
     parentId: r.parent_id ?? null,
@@ -249,7 +249,7 @@ export function loadAll(db: any): AppState {
     createdAt: Number(r.created_at),
   }))
 
-  const knowledgePoints: KnowledgePoint[] = rows(db, 'SELECT * FROM knowledge_points').map((r) => ({
+  const knowledgePoints: KnowledgePoint[] = (await rows(db, 'SELECT * FROM knowledge_points')).map((r) => ({
     id: r.id,
     courseId: r.course_id,
     title: r.title,
@@ -263,7 +263,7 @@ export function loadAll(db: any): AppState {
     updatedAt: Number(r.updated_at),
   }))
 
-  const questions: Question[] = rows(db, 'SELECT * FROM questions').map((r) => ({
+  const questions: Question[] = (await rows(db, 'SELECT * FROM questions')).map((r) => ({
     id: r.id,
     kpId: r.kp_id,
     type: r.type,
@@ -275,7 +275,7 @@ export function loadAll(db: any): AppState {
     createdAt: Number(r.created_at),
   }))
 
-  const answers: AnswerRecord[] = rows(db, 'SELECT * FROM answers').map((r) => ({
+  const answers: AnswerRecord[] = (await rows(db, 'SELECT * FROM answers')).map((r) => ({
     id: r.id,
     questionId: r.question_id,
     userAnswer: r.user_answer,
@@ -286,7 +286,7 @@ export function loadAll(db: any): AppState {
     createdAt: Number(r.created_at),
   }))
 
-  const corrections: Correction[] = rows(db, 'SELECT * FROM corrections').map((r) => ({
+  const corrections: Correction[] = (await rows(db, 'SELECT * FROM corrections')).map((r) => ({
     id: r.id,
     targetType: r.target_type,
     targetId: r.target_id,
@@ -296,7 +296,7 @@ export function loadAll(db: any): AppState {
     createdAt: Number(r.created_at),
   }))
 
-  const interviewSessions: InterviewSession[] = rows(db, 'SELECT * FROM interview_sessions').map(
+  const interviewSessions: InterviewSession[] = (await rows(db, 'SELECT * FROM interview_sessions')).map(
     (r) => ({
       id: r.id,
       role: r.role,
@@ -314,7 +314,7 @@ export function loadAll(db: any): AppState {
     }),
   )
 
-  const kvRows = rows(db, "SELECT key, value FROM kv")
+  const kvRows = await rows(db, 'SELECT key, value FROM kv')
   const kv: Record<string, string> = {}
   for (const r of kvRows) kv[r.key] = r.value
 
@@ -348,8 +348,8 @@ export function loadAll(db: any): AppState {
 }
 
 /** 清空所有业务表（保留结构），用于「重置」。 */
-export function resetDb(db: any): void {
-  db.run('BEGIN')
+export async function resetDb(db: any): Promise<void> {
+  await db.run('BEGIN')
   try {
     for (const t of [
       'courses',
@@ -360,11 +360,11 @@ export function resetDb(db: any): void {
       'interview_sessions',
       'kv',
     ]) {
-      db.run(`DELETE FROM ${t}`)
+      await db.run(`DELETE FROM ${t}`)
     }
-    db.run('COMMIT')
+    await db.run('COMMIT')
   } catch (e) {
-    db.run('ROLLBACK')
+    await db.run('ROLLBACK')
     throw e
   }
 }
@@ -373,18 +373,18 @@ export function resetDb(db: any): void {
  * 一次性迁移：旧版本把整份 AppState 存在 localStorage('skill-qa-agent:v1')。
  * 仅当 SQLite 为空（无课程）时导入，导入后删除旧键，避免重复。
  */
-export function migrateFromLocalStorage(db: any): void {
+export async function migrateFromLocalStorage(db: any): Promise<void> {
   try {
     const raw = localStorage.getItem('skill-qa-agent:v1')
     if (!raw) return
-    const cnt = db.exec('SELECT COUNT(*) AS n FROM courses')
+    const cnt = await db.exec('SELECT COUNT(*) AS n FROM courses')
     const has = cnt.length > 0 && Number(cnt[0].values[0][0]) > 0
     if (has) {
       localStorage.removeItem('skill-qa-agent:v1')
       return
     }
     const saved = JSON.parse(raw) as Partial<AppState>
-    syncAll(db, {
+    await syncAll(db, {
       courses: saved.courses ?? [],
       knowledgePoints: saved.knowledgePoints ?? [],
       questions: saved.questions ?? [],

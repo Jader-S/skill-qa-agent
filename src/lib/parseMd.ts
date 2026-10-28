@@ -175,3 +175,98 @@ export function parseMarkdownToKPs(text: string, fallbackTitle: string): ParsedK
   }
   return out
 }
+
+/** 去掉序号前缀、空白，便于和文件名比较（「01-闭包」与「闭包」视为同一题名）。 */
+function normTitle(s: string): string {
+  return s
+    .replace(/^(?:第\s*[0-9一二三四五六七八九十百]+\s*[章节课讲篇.]?\s*|[0-9]{1,3})\s*[.、\-_:：\s]+/, '')
+    .replace(/\s+/g, '')
+    .toLowerCase()
+}
+
+type HNode = { title: string; level: number; content: string[]; children: HNode[] }
+
+/** 带章节路径的知识点：chapters 是叶子标题之上的目录名，可为空。 */
+export type OutlineSection = ParsedKP & { chapters: string[] }
+
+/**
+ * 按完整标题树解析 Markdown，供文件夹导入拆成可嵌套目录：
+ * - 有子标题的标题 → 章节目录（写入 chapters）
+ * - 没有子标题、但有正文的标题 → 知识点（叶子）
+ * - 唯一的顶层标题若与文件名相同，视为文档题名，不单独建目录
+ * - 代码围栏内的 # 行不当标题
+ */
+export function parseMarkdownOutline(text: string, fallbackTitle: string): OutlineSection[] {
+  const { data, body } = parseFrontmatter(text)
+  const lines = tagCodeFences(body)
+  const root: HNode = { title: '', level: 0, content: [], children: [] }
+  const stack: HNode[] = [root]
+  const headingRe = /^(#{1,6})\s+(.+?)\s*$/
+
+  for (const { text: line, inCode } of lines) {
+    if (!inCode) {
+      const h = line.match(headingRe)
+      if (h) {
+        const level = h[1].length
+        while (stack.length > 1 && stack[stack.length - 1].level >= level) stack.pop()
+        const node: HNode = { title: h[2].trim(), level, content: [], children: [] }
+        stack[stack.length - 1].children.push(node)
+        stack.push(node)
+        continue
+      }
+    }
+    stack[stack.length - 1].content.push(line)
+  }
+
+  const out: OutlineSection[] = []
+  const push = (chapters: string[], title: string, content: string) => {
+    const bodyText = content.trim()
+    if (!bodyText) return
+    for (const k of chunkContent(title, bodyText, data.tags, MAX_KP_LEN)) {
+      out.push({ chapters, title: k.title, content: k.content, tags: k.tags })
+    }
+  }
+
+  const walk = (node: HNode, ancestors: string[]) => {
+    const own = node.content.join('\n').trim()
+    if (node.children.length === 0) {
+      if (own) push(ancestors, node.title || fallbackTitle, own)
+      return
+    }
+    const next = node.title ? [...ancestors, node.title] : ancestors
+    if (own) push(next, node.title || fallbackTitle, own)
+    for (const child of node.children) walk(child, next)
+  }
+
+  if (root.children.length === 0) {
+    push([], data.title || fallbackTitle, root.content.join('\n'))
+    return out
+  }
+
+  // 唯一顶层标题与文件名相同，且下面还有子标题：它是文档题名，子树提升到文件这一层。
+  const only = root.children.length === 1 ? root.children[0] : null
+  const skipDoc =
+    !!only && only.children.length > 0 && normTitle(only.title) === normTitle(fallbackTitle)
+
+  if (skipDoc && only) {
+    const intro = [root.content.join('\n'), only.content.join('\n')].filter((s) => s.trim()).join('\n\n')
+    const before = out.length
+    for (const child of only.children) walk(child, [])
+    if (intro.trim()) {
+      if (out.length > before) {
+        out[before] = { ...out[before], content: intro.trim() + '\n\n' + out[before].content }
+      } else push([], only.title, intro)
+    }
+    return out
+  }
+
+  const pre = root.content.join('\n').trim()
+  const before = out.length
+  for (const child of root.children) walk(child, [])
+  if (pre) {
+    if (out.length > before) {
+      out[before] = { ...out[before], content: pre + '\n\n' + out[before].content }
+    } else push([], data.title || fallbackTitle, pre)
+  }
+  return out
+}

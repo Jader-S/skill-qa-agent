@@ -8,7 +8,9 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types scripts/test-parse.ts && node --experimental-strip-types scripts/test-folder-import.ts && node --experimental-strip-types scripts/test-db.ts && node --experimental-strip-types scripts/test-backup.ts && node --experimental-strip-types scripts/test-phase2.ts",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "desktop": "tauri dev",
+    "desktop:build": "tauri build"
   },
   "dependencies": {
     "jszip": "^3.10.2",
@@ -16,8 +18,11 @@
     "pdfjs-dist": "^6.3.289",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "sql.js": "^1.14.2",
-    "zustand": "^4.5.5"
+    "zustand": "^4.5.5",
+    "@tauri-apps/api": "^2"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
@@ -25,6 +30,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "pdf-lib": "^1.17.1",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "@tauri-apps/cli": "^2"
   }
 }

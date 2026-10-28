@@ -13,6 +13,7 @@ import type {
 } from '../types'
 import { uid } from '../lib/id'
 import * as db from '../lib/db'
+import { isDesktop, rememberApiKey } from '../lib/desktop'
 import { getLastBackupAt, runAutoBackup } from '../lib/autoBackup'
 
 // 从 .env(.local) 读取默认 LLM 配置（Vite 注入，仅本地自用场景）。
@@ -315,6 +316,10 @@ export const useStore = create<Store>((set, get) => {
       liveInterview: loaded.liveInterview ?? null,
       hydrated: true,
     })
+    if (isDesktop()) {
+      const key = useStore.getState().settings.apiKey
+      if (key) void rememberApiKey(key).catch(() => {})
+    }
   } catch {
     useStore.setState({ hydrated: true })
   }

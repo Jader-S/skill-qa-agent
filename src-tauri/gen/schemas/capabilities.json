@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"主窗口可使用本机数据库与凭据管理器命令。","local":true,"windows":["main"],"permissions":["core:default"]}}

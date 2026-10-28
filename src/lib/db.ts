@@ -3,13 +3,19 @@ import initSqlJs from 'sql.js'
 import sqlWasmUrl from 'sql.js/dist/sql-wasm.wasm?url'
 import type { AppState } from '../types'
 import * as schema from './dbSchema'
+import {
+  forgetApiKey,
+  isDesktop,
+  openDesktopDatabase,
+  readApiKey,
+  rememberApiKey,
+} from './desktop'
 
 /**
- * 浏览器内「独立数据库」适配层：sql.js（SQLite 编译成 WASM）跑真 SQL，
- * DB 文件字节持久化到 IndexedDB。无需服务器、规范化多表、自动保存。
- *
- * 接口刻意做成 DatabaseAdapter 风格（open/syncAll/loadAll/resetDb），
- * 将来切 Tauri 原生 SQLite 或 Node better-sqlite3 时只换本文件实现，store 不动。
+ * 数据库适配层。
+ * - 浏览器：sql.js（真 SQLite）+ IndexedDB 持久化。
+ * - 桌面壳：同一套 SQL 交给 Rust rusqlite，文件落在应用数据目录。
+ * store 只调用 open / syncAll / loadAll / resetDb。
  */
 
 let SQL: any = null
@@ -51,30 +57,75 @@ async function idbSet(key: string, data: Uint8Array): Promise<void> {
   })
 }
 
-/** 启动数据库：初始化 WASM、从 IndexedDB 载入已有 DB 文件、建表、一次性迁移旧 localStorage。 */
+/** 桌面版不把 API Key 写进数据库文件；写入失败时保留在文件里，避免丢钥匙。 */
+async function sealSettings(state: AppState): Promise<AppState> {
+  if (!isDesktop()) return state
+  const key = state.settings.apiKey || ''
+  try {
+    if (key) await rememberApiKey(key)
+    else await forgetApiKey()
+    return { ...state, settings: { ...state.settings, apiKey: '' } }
+  } catch (error) {
+    console.error('凭据管理器写入失败，API Key 仍会留在数据库文件里', error)
+    return state
+  }
+}
+
+async function unsealSettings(state: AppState): Promise<AppState> {
+  if (!isDesktop()) return state
+  let vault = ''
+  try {
+    vault = await readApiKey()
+  } catch (error) {
+    console.error('读取凭据管理器失败', error)
+  }
+  const fromDb = state.settings.apiKey || ''
+  const key = vault || fromDb
+  if (fromDb) {
+    try {
+      if (fromDb !== vault) await rememberApiKey(fromDb)
+      await database.run('UPDATE kv SET value = ? WHERE key = ?', [
+        JSON.stringify({ ...state.settings, apiKey: '' }),
+        'settings',
+      ])
+    } catch (error) {
+      console.error('无法把已有 API Key 迁入凭据管理器', error)
+    }
+  }
+  return { ...state, settings: { ...state.settings, apiKey: key } }
+}
+
+/** 启动数据库：浏览器走 WASM + IndexedDB；桌面壳打开本机 .db 文件。 */
 export async function openDb(): Promise<void> {
   if (ready) return ready
   ready = (async () => {
-    if (!SQL) {
-      SQL = await initSqlJs({ locateFile: () => sqlWasmUrl })
+    if (isDesktop()) {
+      database = await openDesktopDatabase()
+    } else {
+      if (!SQL) {
+        SQL = await initSqlJs({ locateFile: () => sqlWasmUrl })
+      }
+      const bytes = await idbGet(DB_KEY)
+      database = bytes ? new SQL.Database(bytes) : new SQL.Database()
     }
-    const bytes = await idbGet(DB_KEY)
-    database = bytes ? new SQL.Database(bytes) : new SQL.Database()
-    schema.migrate(database)
-    schema.migrateFromLocalStorage(database)
+    await schema.migrate(database)
+    await schema.migrateFromLocalStorage(database)
   })()
   return ready
 }
 
-/** 全量同步 AppState 到各表，并把 DB 文件落盘到 IndexedDB（防抖由调用方控制）。 */
+/** 全量同步 AppState。浏览器再把 DB 字节写入 IndexedDB；桌面壳由 rusqlite 直接落盘。 */
 export async function syncAll(state: AppState): Promise<void> {
   if (!database) return
-  schema.syncAll(database, state)
-  const bytes = database.export()
-  await idbSet(DB_KEY, bytes)
+  const sealed = await sealSettings(state)
+  await schema.syncAll(database, sealed)
+  if (!isDesktop()) {
+    const bytes = database.export()
+    await idbSet(DB_KEY, bytes)
+  }
 }
 
-/** 从各表读回完整 AppState。 */
+/** 从各表读回完整 AppState。桌面版会把凭据管理器里的 API Key 填回内存。 */
 export async function loadAll(): Promise<AppState> {
   if (!database) {
     return {
@@ -88,7 +139,7 @@ export async function loadAll(): Promise<AppState> {
       voice: { lang: 'zh-CN' },
     }
   }
-  return schema.loadAll(database)
+  return unsealSettings(await schema.loadAll(database))
 }
 
 /** 重置：清空所有业务表。 */
@@ -96,5 +147,5 @@ export async function resetDb(): Promise<void> {
   if (!database) {
     await openDb()
   }
-  schema.resetDb(database)
+  await schema.resetDb(database)
 }
