@@ -58,6 +58,7 @@ function emptyState(): AppState {
     answers: [],
     corrections: [],
     interviewSessions: [],
+    masteredWrongIds: [],
     settings: defaultSettings,
     voice: defaultVoice,
     liveInterview: null,
@@ -78,6 +79,7 @@ type Store = AppState & {
   addQuestions: (qs: Question[]) => void
   deleteQuestion: (id: string) => void
   recordAnswer: (a: Omit<AnswerRecord, 'id' | 'createdAt'>) => void
+  markMastered: (ids: string[]) => void
   addCorrection: (c: Omit<Correction, 'id' | 'createdAt'>) => void
   addInterviewSession: (s: Omit<InterviewSession, 'id' | 'createdAt'>) => void
   setSettings: (patch: Partial<LLMConfig>) => void
@@ -108,8 +110,10 @@ function maybeAutoBackup(get: () => Store) {
       answers: s.answers,
       corrections: s.corrections,
       interviewSessions: s.interviewSessions,
+      masteredWrongIds: s.masteredWrongIds,
       settings: s.settings,
       voice: s.voice,
+      liveInterview: s.liveInterview ?? null,
     }).catch(() => {})
   }, 2000)
 }
@@ -129,6 +133,7 @@ function scheduleSync(get: () => Store) {
         answers: s.answers,
         corrections: s.corrections,
         interviewSessions: s.interviewSessions,
+        masteredWrongIds: s.masteredWrongIds,
         settings: s.settings,
         voice: s.voice,
         liveInterview: s.liveInterview ?? null,
@@ -227,8 +232,33 @@ export const useStore = create<Store>((set, get) => {
     },
 
     recordAnswer: (a) => {
+      set((s) => {
+        const id = uid()
+        const createdAt = Date.now()
+        const answers = [...s.answers, { ...a, id, createdAt }]
+        let masteredWrongIds = s.masteredWrongIds
+        if (a.score >= 60) {
+          const q = s.questions.find((item) => item.id === a.questionId)
+          if (q) {
+            const ids = new Set(s.questions.filter((item) => item.kpId === q.kpId).map((item) => item.id))
+            const extra: string[] = []
+            for (const qid of ids) {
+              const list = answers.filter((item) => item.questionId === qid)
+              const latest = list[list.length - 1]
+              if (!latest || latest.score < 60) continue
+              const fail = [...list].reverse().find((item) => item.score < 60)
+              if (fail && !masteredWrongIds.includes(fail.id)) extra.push(fail.id)
+            }
+            if (extra.length) masteredWrongIds = [...masteredWrongIds, ...extra]
+          }
+        }
+        return { answers, masteredWrongIds }
+      })
+      persist()
+    },
+    markMastered: (ids) => {
       set((s) => ({
-        answers: [...s.answers, { ...a, id: uid(), createdAt: Date.now() }],
+        masteredWrongIds: [...new Set([...s.masteredWrongIds, ...ids])],
       }))
       persist()
     },
@@ -279,6 +309,7 @@ export const useStore = create<Store>((set, get) => {
           answers: data.answers,
           corrections: data.corrections,
           interviewSessions: data.interviewSessions,
+          masteredWrongIds: data.masteredWrongIds ?? [],
           settings: data.settings,
           voice: data.voice,
         })
@@ -290,6 +321,7 @@ export const useStore = create<Store>((set, get) => {
         answers: data.answers,
         corrections: data.corrections,
         interviewSessions: data.interviewSessions,
+        masteredWrongIds: data.masteredWrongIds ?? [],
         settings: mergeEnv(data.settings),
         voice: data.voice,
         liveInterview: data.liveInterview ?? null,
@@ -311,6 +343,7 @@ export const useStore = create<Store>((set, get) => {
       answers: loaded.answers,
       corrections: loaded.corrections,
       interviewSessions: loaded.interviewSessions,
+      masteredWrongIds: loaded.masteredWrongIds ?? [],
       settings: loaded.settings ? mergeEnv(loaded.settings) : defaultSettings,
       voice: loaded.voice,
       liveInterview: loaded.liveInterview ?? null,

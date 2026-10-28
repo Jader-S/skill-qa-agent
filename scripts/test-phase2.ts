@@ -2,6 +2,7 @@ import JSZip from 'jszip'
 import { LexicalRetriever } from '../src/lib/retrieval.ts'
 import { splitProseToKPs, parseDocToKPs } from '../src/lib/parseDoc.ts'
 import type { KnowledgePoint } from '../src/types.ts'
+import { isMockSupplement, optimizeSkipReason } from '../src/lib/optimizeSkip.ts'
 
 let failures = 0
 const assert = (cond: boolean, msg: string) => {
@@ -72,6 +73,33 @@ const pptxFile = { name: 'deck.pptx', arrayBuffer: async () => pptxBytes } as an
 const pptxKps = await parseDocToKPs(pptxFile, 'deck')
 assert(pptxKps.length === 2, `pptx 解析：应切 2 张幻灯片为 2 个知识点（实际 ${pptxKps.length}）`)
 assert(pptxKps[1].content.includes('margin'), 'pptx 解析：第二页文本抽取正确')
+
+// ---------- 5. 批量补充：Mock 占位与真实补充分开跳过 ----------
+const mockKp = { aiContent: '（Mock 补充）占位' }
+const realKp = { aiContent: '这是真实模型写的补充' }
+const emptyKp = { aiContent: '' }
+assert(isMockSupplement(mockKp.aiContent), 'Mock 补充：以「（Mock」开头')
+assert(!isMockSupplement(realKp.aiContent), '真实补充：不以 Mock 开头')
+assert(
+  optimizeSkipReason(mockKp, { skipOptimized: true, skipMock: false }) === null,
+  '跳过已有补充时，仍可选择重做 Mock',
+)
+assert(
+  optimizeSkipReason(realKp, { skipOptimized: true, skipMock: false }) === 'optimized',
+  '跳过已有补充时，真实补充被跳过',
+)
+assert(
+  optimizeSkipReason(mockKp, { skipOptimized: true, skipMock: true }) === 'mock',
+  '同时要求跳过 Mock 时，占位被留下',
+)
+assert(
+  optimizeSkipReason(mockKp, { skipOptimized: false, skipMock: true }) === null,
+  '取消跳过已有补充（整批重跑）时，Mock 也要重做',
+)
+assert(
+  optimizeSkipReason(emptyKp, { skipOptimized: true, skipMock: true }) === null,
+  '没有补充的知识点始终要生成',
+)
 
 if (failures === 0) console.log('\nALL PHASE2 UNIT TESTS OK')
 else {

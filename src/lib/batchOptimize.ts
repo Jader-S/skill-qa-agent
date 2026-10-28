@@ -1,6 +1,9 @@
 import { runTask } from './runTask'
 import { buildOptimizeMessages } from './prompts'
+import { optimizeSkipReason } from './optimizeSkip'
 import type { KnowledgePoint, LLMConfig } from '../types'
+
+export { isMockSupplement, optimizeSkipReason } from './optimizeSkip'
 
 /**
  * 单个知识点的 AI 优化补充：基于笔记原文产出「补充与拓展」Markdown。
@@ -30,6 +33,7 @@ export interface BatchOptimizeResult {
   success: number
   failed: number
   skipped: number
+  skippedMock: number
   aborted: boolean
 }
 
@@ -38,8 +42,10 @@ export interface BatchOptimizeOptions {
   kps: KnowledgePoint[]
   /** 并发数（默认 2）：过低慢、过高易触发限流 429。 */
   concurrency?: number
-  /** 跳过已有 AI 补充的知识点。 */
+  /** 跳过已有真实 AI 补充的知识点。 */
   skipOptimized?: boolean
+  /** 跳过已有 Mock 离线补充的知识点。 */
+  skipMock?: boolean
   signal?: AbortSignal
   onProgress?: (done: number, total: number, current?: KnowledgePoint) => void
   /** 每完成一项回调：成功时 ai 为文本，失败时 error 有值。 */
@@ -53,11 +59,17 @@ export interface BatchOptimizeOptions {
 export async function runBatchOptimize(
   opts: BatchOptimizeOptions,
 ): Promise<BatchOptimizeResult> {
-  const { settings, kps, concurrency = 2, skipOptimized = false, signal, onProgress, onItem } =
+  const { settings, kps, concurrency = 2, skipOptimized = false, skipMock = false, signal, onProgress, onItem } =
     opts
 
-  const queue = kps.filter((k) => !(skipOptimized && k.aiContent))
-  const skipped = kps.length - queue.length
+  let skipped = 0
+  let skippedMock = 0
+  const queue = kps.filter((k) => {
+    const reason = optimizeSkipReason(k, { skipOptimized, skipMock })
+    if (reason === 'mock') skippedMock++
+    else if (reason === 'optimized') skipped++
+    return reason === null
+  })
   const total = queue.length
 
   let success = 0
@@ -96,5 +108,5 @@ export async function runBatchOptimize(
   )
   await Promise.all(workers)
 
-  return { success, failed, skipped, aborted: !!signal?.aborted }
+  return { success, failed, skipped, skippedMock, aborted: !!signal?.aborted }
 }

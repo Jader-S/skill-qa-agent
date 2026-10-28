@@ -1,4 +1,5 @@
 import type { KnowledgePoint, Question, InterviewRound } from '../types'
+import { SCORE_JSON } from './analysis'
 
 export function buildGenerateMessages(
   kps: KnowledgePoint[],
@@ -17,7 +18,7 @@ export function buildScoreMessages(
   kp: KnowledgePoint,
   userAnswer: string,
 ): { system: string; user: string } {
-  const system = `你是评分官。只能依据以下知识点与标准答案评分，不确定要明确说明。输出 JSON：{"score":0-100,"correct":true|false,"feedback":"评语","weakPoints":["薄弱点"]}。只输出 JSON。`
+  const system = `你是评分官。只能依据以下知识点与标准答案评分，不确定要明确说明。${SCORE_JSON}`
   const user = `知识点：【${kp.title}】\n${kp.content}\n\n题目：${q.stem}\n标准答案：${q.modelAnswer}\n\n考生作答：${userAnswer}\n\n请给出评分 JSON。`
   return { system, user }
 }
@@ -64,7 +65,7 @@ export function buildInterviewScoreMessages(
   context: string,
   round: { question: string; reference: string; userAnswer: string },
 ): { system: string; user: string } {
-  const system = `你是「${role}」面试官，负责评分。只能依据以下知识点与参考答案要点评分，不确定要明确说明。输出 JSON：{"score":0-100,"correct":true|false,"feedback":"评语","weakPoints":["薄弱点"]}。只输出 JSON。`
+  const system = `你是「${role}」面试官，负责评分。只能依据以下知识点与参考答案要点评分，不确定要明确说明。${SCORE_JSON}`
   const user = `相关知识点：\n${context}\n\n题目：${round.question}\n参考答案要点：${round.reference}\n考生作答：${round.userAnswer}\n\n请给出评分 JSON。`
   return { system, user }
 }
@@ -98,5 +99,32 @@ export function buildOptimizeMessages(kp: KnowledgePoint): { system: string; use
 3. 若原文已很完整，也请给出 1-2 条有价值的补充或提示，不要空白；
 4. 直接输出 Markdown，不要任何额外解释或包裹符号。`
   const user = `笔记标题：${kp.title}\n\n笔记原文：\n${kp.content}\n\n请基于上述原文，产出「补充与拓展」（Markdown）。`
+  return { system, user }
+}
+
+export function buildOutlineMessages(input: {
+  name: string
+  goal: string
+  depth: '入门' | '进阶'
+  interests: string[]
+}): { system: string; user: string } {
+  const system = `你是课程设计师。根据主题生成最多 3 层的章节目录，不要写知识点正文。输出 JSON：{"chapters":[{"title":"章名","blurb":"一句话简介","children":[]}]}。children 结构相同，叶子的 children 为空数组。只输出 JSON。`
+  const user = `课程名：${input.name}\n深度：${input.depth}\n目标：${input.goal || '未指定'}\n感兴趣的点：${input.interests.join('、') || '无'}\n请生成目录。`
+  return { system, user }
+}
+
+export function buildChapterKpMessages(chapter: string, blurb: string, course: string): { system: string; user: string } {
+  const system = `你是讲师。只为这一节写 2 到 4 个知识点，每个有标题和 Markdown 正文。输出 JSON：{"points":[{"title":"标题","content":"正文"}]}。不要输出目录。只输出 JSON。`
+  const user = `课程：${course}\n章节：${chapter}\n简介：${blurb || '无'}\n请写这一节的知识点。`
+  return { system, user }
+}
+
+export function buildInterestMessages(input: {
+  course: string
+  chapters: string[]
+  interest: string
+}): { system: string; user: string } {
+  const system = `你是讲师。用户想补充一个感兴趣的点。输出 JSON：{"action":"points|chapter","chapterTitle":"若 action 为 chapter 则是新章节名，否则空字符串","points":[{"title":"标题","content":"Markdown 正文"}]}。能放进现有章节就用 points，需要新开一节才用 chapter。只输出 JSON。`
+  const user = `课程：${input.course}\n已有章节：${input.chapters.join('、') || '无'}\n感兴趣的点：${input.interest}`
   return { system, user }
 }

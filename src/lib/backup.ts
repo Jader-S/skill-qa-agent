@@ -17,6 +17,7 @@ export type LibraryBackup = {
     answers: AppState['answers']
     corrections: AppState['corrections']
     interviewSessions: AppState['interviewSessions']
+    masteredWrongIds?: string[]
     settings: AppState['settings']
     voice: AppState['voice']
   }
@@ -34,8 +35,9 @@ export function buildBackup(state: AppState): LibraryBackup {
       questions: state.questions,
       answers: state.answers,
       corrections: state.corrections,
-      interviewSessions: state.interviewSessions,
-      settings: state.settings,
+    interviewSessions: state.interviewSessions,
+    masteredWrongIds: state.masteredWrongIds ?? [],
+    settings: state.settings,
       voice: state.voice,
     },
   }
@@ -80,6 +82,7 @@ export function parseBackup(text: string): AppState {
     answers: d.answers ?? [],
     corrections: d.corrections ?? [],
     interviewSessions: d.interviewSessions ?? [],
+    masteredWrongIds: d.masteredWrongIds ?? [],
     settings: d.settings,
     voice: d.voice ?? { lang: 'zh-CN' },
   }

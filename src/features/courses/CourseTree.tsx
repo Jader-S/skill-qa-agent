@@ -65,7 +65,7 @@ export default function CourseTree({
           >
             {c.name}
           </span>
-          {count > 0 && <span className="tree-count">{count}</span>}
+          {(count > 0 || children.length > 0) && <span className="tree-count">{count}</span>}
           <button
             className="mini ghost"
             title="重命名"

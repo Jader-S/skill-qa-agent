@@ -1,13 +1,17 @@
 import { useState } from 'react'
 import { useStore } from '../../store/useStore'
-import { subtreeIds, coursePath } from '../../lib/courseTree'
+import { subtreeIds, coursePath, countKPsInSubtree } from '../../lib/courseTree'
 import { courseToMarkdown, downloadMarkdown } from '../../lib/exportObsidian'
 import { parseDocToKPs, detectFormat } from '../../lib/parseDoc'
 import { buildFolderImport, type FolderImportPlan } from '../../lib/importFolder'
-import { optimizeOne } from '../../lib/batchOptimize'
+import { isMockSupplement, optimizeOne } from '../../lib/batchOptimize'
+import { trackOptimize, useOptimizeSession } from '../../lib/optimizeSession'
 import KnowledgePointDetail from './KnowledgePointDetail'
 import ChapterOptimize from './ChapterOptimize'
 import MarkdownView from './MarkdownView'
+import TopicGenerate from './TopicGenerate'
+import { authorLabel } from '../shared/AnalysisView'
+import { buildWrongItems } from '../../lib/wrongBook'
 import type { Course, KnowledgePoint } from '../../types'
 
 export default function KnowledgeView({
@@ -19,6 +23,11 @@ export default function KnowledgeView({
 }) {
   const courses = useStore((s) => s.courses)
   const allKps = useStore((s) => s.knowledgePoints)
+  const questions = useStore((s) => s.questions)
+  const answers = useStore((s) => s.answers)
+  const corrections = useStore((s) => s.corrections)
+  const interviewSessions = useStore((s) => s.interviewSessions)
+  const masteredWrongIds = useStore((s) => s.masteredWrongIds)
   const addKP = useStore((s) => s.addKP)
   const deleteKP = useStore((s) => s.deleteKP)
   const importFolder = useStore((s) => s.importFolder)
@@ -37,8 +46,22 @@ export default function KnowledgeView({
       <div>
         <h2 className="page-title">知识点</h2>
         <div className="empty">请在左侧课程目录中选择一门课程，进入后即可查看 / 录入 / 导入其下的知识点。</div>
+        <TopicGenerate parentId={null} />
       </div>
     )
+  }
+
+  const openWrongs = buildWrongItems({
+    answers,
+    questions,
+    knowledgePoints: allKps,
+    corrections,
+    interviewSessions,
+    masteredWrongIds,
+  }).filter((item) => !item.mastered)
+  const unmasteredIn = (id: string) => {
+    const ids = new Set(subtreeIds(courses, id))
+    return openWrongs.filter((item) => item.courseIds.some((course) => ids.has(course))).length
   }
 
   const course = courses.find((c) => c.id === courseId)
@@ -133,6 +156,9 @@ export default function KnowledgeView({
     <div>
       <div className="row" style={{ marginBottom: 10 }}>
         <h2 className="page-title" style={{ margin: 0 }}>知识点</h2>
+        <span className="muted" style={{ fontSize: 12 }}>本目录共 {countKPsInSubtree(courses, allKps, courseId)} 个</span>
+        <div className="spacer" />
+        <TopicGenerate parentId={courseId} />
         {subCourses.length > 0 && (
           <label
             className="muted"
@@ -186,7 +212,12 @@ export default function KnowledgeView({
                 onClick={() => onNavigateCourse(c.id)}
               >
                 <strong>{c.name}</strong>
-                <span className="muted">{allKps.filter((k) => k.courseId === c.id).length} 个知识点</span>
+                <span className="muted">
+                  共 {countKPsInSubtree(courses, allKps, c.id)} 个
+                  {allKps.filter((k) => k.courseId === c.id).length !== countKPsInSubtree(courses, allKps, c.id) &&
+                    ` · 本章直接 ${allKps.filter((k) => k.courseId === c.id).length} 个`}
+                  {unmasteredIn(c.id) > 0 && ` · 未掌握 ${unmasteredIn(c.id)}`}
+                </span>
               </div>
             ))}
           </div>
@@ -320,14 +351,14 @@ function KPCard({
 }) {
   const settings = useStore((s) => s.settings)
   const optimizeKP = useStore((s) => s.optimizeKP)
+  const aiBusy = useOptimizeSession().busyIds.includes(kp.id)
   const hasAi = !!kp.aiContent
-  const [aiBusy, setAiBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   const quickOptimize = async (e: React.MouseEvent) => {
     e.stopPropagation()
     if (aiBusy) return
-    setAiBusy(true)
+    const finish = trackOptimize(kp.id)
     setErr(null)
     try {
       const ai = await optimizeOne(settings, kp)
@@ -336,7 +367,7 @@ function KPCard({
     } catch (er: any) {
       setErr(er?.message || String(er))
     } finally {
-      setAiBusy(false)
+      finish()
     }
   }
 
@@ -347,7 +378,10 @@ function KPCard({
         <div className="spacer" />
         {err && <span className="badge bad" title={err}>失败</span>}
         <span className="tag">{kp.sourceType}</span>
-        {hasAi && <span className="badge fix">AI已补充</span>}
+        {authorLabel(kp) && <span className="badge fix">{authorLabel(kp)}</span>}
+        {hasAi && (
+          <span className="badge fix">{isMockSupplement(kp.aiContent) ? 'Mock补充' : 'AI已补充'}</span>
+        )}
         {kp.tags.map((x) => (
           <span key={x} className="tag">#{x}</span>
         ))}

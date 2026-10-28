@@ -7,6 +7,7 @@ import { buildGenerateMessages, buildScoreMessages, buildFollowupMessages } from
 import { uid } from '../../lib/id'
 import type { Course, KnowledgePoint, Question, QuestionType } from '../../types'
 import QuestionCard from './QuestionCard'
+import { clearDrill, useDrill } from '../../lib/drill'
 
 type Group = { course: Course; kps: KnowledgePoint[] }
 
@@ -16,6 +17,7 @@ export default function SelfTestView({ courseId }: { courseId: string | null }) 
   const questions = useStore((s) => s.questions)
   const addQuestions = useStore((s) => s.addQuestions)
   const settings = useStore((s) => s.settings)
+  const drill = useDrill()
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [generating, setGenerating] = useState(false)
@@ -23,12 +25,14 @@ export default function SelfTestView({ courseId }: { courseId: string | null }) 
 
   // 选中课程子树内的全部知识点，按「所属章节（直接父课程）」分组 —— 出题按目录分类。
   const groups = useMemo<Group[]>(() => {
-    if (!courseId) return []
-    const ids = new Set(subtreeIds(courses, courseId))
+    if (drill?.kind !== 'quiz' && !courseId) return []
+    const ids = courseId ? new Set(subtreeIds(courses, courseId)) : null
     const courseById = new Map(courses.map((c) => [c.id, c]))
     const map = new Map<string, KnowledgePoint[]>()
     for (const k of allKps) {
-      if (!ids.has(k.courseId)) continue
+      if (drill?.kind === 'quiz') {
+        if (!drill.kpIds.includes(k.id)) continue
+      } else if (!ids?.has(k.courseId)) continue
       const cid = k.courseId
       if (!map.has(cid)) map.set(cid, [])
       map.get(cid)!.push(k)
@@ -37,7 +41,7 @@ export default function SelfTestView({ courseId }: { courseId: string | null }) 
       .map(([cid, kps]) => ({ course: courseById.get(cid)!, kps }))
       .filter((g) => g.course)
       .sort((a, b) => a.course.sort - b.course.sort)
-  }, [courseId, courses, allKps])
+  }, [courseId, courses, allKps, drill])
 
   const flatKps = useMemo(() => groups.flatMap((g) => g.kps), [groups])
 
@@ -45,7 +49,7 @@ export default function SelfTestView({ courseId }: { courseId: string | null }) 
     setSelected(new Set(flatKps.map((k) => k.id)))
   }, [courseId, flatKps.length])
 
-  if (!courseId) {
+  if (!courseId && drill?.kind !== 'quiz') {
     return (
       <div>
         <h2 className="page-title">自测</h2>
@@ -142,6 +146,13 @@ export default function SelfTestView({ courseId }: { courseId: string | null }) 
   const selectedCount = flatKps.filter((k) => selected.has(k.id)).length
 
   return (
+    <>
+    {drill?.kind === 'quiz' && (
+      <div className="row" style={{ marginBottom: 8 }}>
+        <span className="badge fix">正在按错题本里的知识点再练</span>
+        <button className="mini" onClick={clearDrill}>退出再练</button>
+      </div>
+    )}
     <div>
       <h2 className="page-title">自测</h2>
 
@@ -213,5 +224,6 @@ export default function SelfTestView({ courseId }: { courseId: string | null }) 
         )}
       </div>
     </div>
+    </>
   )
 }

@@ -16,6 +16,7 @@ import {
 } from '../../lib/autoBackup'
 import type { LLMConfig } from '../../types'
 import { ensureDbPath, getCachedDbPath, isDesktop } from '../../lib/desktop'
+import UsagePanel from './UsagePanel'
 
 const STALE_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -175,6 +176,8 @@ export default function SettingsView() {
           {settings.apiKey && !settings.useMock && (desktop ? ' · 已接入 API Key（存在 Windows 凭据管理器）' : ' · 已接入 API Key（默认来自 .env.local）')}
         </div>
       </div>
+
+      <UsagePanel />
 
       <div className="panel">
         <div className="muted" style={{ marginBottom: 8 }}>

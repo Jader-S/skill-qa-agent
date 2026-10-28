@@ -1,16 +1,19 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore } from '../../store/useStore'
 import { runTask } from '../../lib/runTask'
 import { extractJson } from '../../lib/llm/parse'
 import { buildScoreMessages, buildFollowupMessages } from '../../lib/prompts'
-import type { AnswerRecord, KnowledgePoint, LLMConfig, Question } from '../../types'
+import type { AnswerRecord, AttemptAnalysis, KnowledgePoint, LLMConfig, Question } from '../../types'
 import { speech } from '../../lib/speech'
+import { normalizeAnalysis } from '../../lib/analysis'
+import AnalysisView, { authorLabel } from '../shared/AnalysisView'
 
 type ScoreResult = {
   score: number
   correct: boolean
   feedback: string
   weakPoints?: string[]
+  analysis?: AttemptAnalysis
 }
 
 export default function QuestionCard({
@@ -23,6 +26,8 @@ export default function QuestionCard({
   settings: LLMConfig
 }) {
   const recordAnswer = useStore((s) => s.recordAnswer)
+  const answers = useStore((s) => s.answers)
+  const optimizeKP = useStore((s) => s.optimizeKP)
   const addCorrection = useStore((s) => s.addCorrection)
   const corrections = useStore((s) => s.corrections)
   const voice = useStore((s) => s.voice)
@@ -40,6 +45,22 @@ export default function QuestionCard({
 
   const answer = q.type === 'choice' ? choice : text
 
+  useEffect(() => {
+    const latest = [...answers].reverse().find((item) => item.questionId === q.id)
+    if (!latest) return
+    setResult({
+      score: latest.score,
+      correct: latest.correct,
+      feedback: latest.feedback,
+      weakPoints: latest.weakPoints,
+      analysis: latest.analysis,
+    })
+    if (q.type === 'choice') setChoice(latest.userAnswer)
+    else setText(latest.userAnswer)
+    // 只在换题时回放最近一次作答。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q.id])
+
   const submit = async () => {
     if (!answer) return
     const { system, user } = buildScoreMessages(q, kp, answer)
@@ -54,7 +75,8 @@ export default function QuestionCard({
         ],
         'score',
       )
-      const parsed = extractJson<ScoreResult>(out)
+      const parsed = extractJson<ScoreResult & { lossPoints?: unknown; explanation?: unknown; complexity?: unknown; references?: unknown }>(out)
+      const analysis = normalizeAnalysis(parsed, Number(parsed.score))
       const rec: Omit<AnswerRecord, 'id' | 'createdAt'> = {
         questionId: q.id,
         userAnswer: answer,
@@ -62,9 +84,10 @@ export default function QuestionCard({
         correct: parsed.correct,
         feedback: parsed.feedback,
         weakPoints: parsed.weakPoints,
+        analysis,
       }
       recordAnswer(rec)
-      setResult(parsed)
+      setResult({ ...parsed, analysis })
     } catch (e: any) {
       setStreaming('解析失败：' + e.message)
     } finally {
@@ -147,6 +170,7 @@ export default function QuestionCard({
         <span className="tag">{q.type === 'choice' ? '选择题' : q.type === 'code' ? '代码题' : '简答'}</span>
         <span className="tag">{q.difficulty}</span>
         <span className="tag">#{kp.title}</span>
+        {authorLabel(kp) && <span className="badge fix">{authorLabel(kp)}</span>}
       </div>
       <div style={{ marginTop: 8, whiteSpace: 'pre-wrap' }}>{q.stem}</div>
 
@@ -216,6 +240,20 @@ export default function QuestionCard({
             <div className="score-fill" style={{ width: `${Math.max(0, Math.min(100, Number(showScore) || 0))}%` }} />
           </div>
           <div style={{ marginTop: 8 }}>{showFeedback}</div>
+          {Number(showScore) < 60 && (
+            <AnalysisView
+              analysis={result.analysis}
+              kp={kp}
+              onSaveExplanation={
+                result.analysis?.explanation
+                  ? () => {
+                      if (kp.aiContent && !confirm('这个知识点已有补充，要覆盖吗？')) return
+                      optimizeKP(kp.id, result.analysis!.explanation)
+                    }
+                  : undefined
+              }
+            />
+          )}
           {result.weakPoints && result.weakPoints.length > 0 && (
             <div className="muted" style={{ marginTop: 6 }}>
               薄弱点：{result.weakPoints.join('、')}

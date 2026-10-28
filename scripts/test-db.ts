@@ -164,6 +164,25 @@ async function main() {
     'liveInterview 快照往返一致',
   )
 
+  await schema.insertLlmCall(db, {
+    id: 'u1',
+    createdAt: 1_700_000_000_000,
+    task: 'optimize',
+    provider: 'deepseek',
+    model: 'deepseek-chat',
+    status: 'ok',
+    promptTokens: 10,
+    completionTokens: 20,
+    estimated: false,
+    durationMs: 5,
+  })
+  const calls = await schema.listLlmCalls(db, 0)
+  assert(
+    calls.length === 1 && calls[0].promptTokens === 10 && calls[0].completionTokens === 20 && !calls[0].estimated,
+    'llm_calls 可写入并读回',
+  )
+  assert((await schema.listLlmCalls(db, 1_700_000_000_001)).length === 0, 'llm_calls 按时间过滤')
+
   // 重置清空
   await schema.resetDb(db)
   const afterReset = await schema.loadAll(db)
@@ -174,6 +193,7 @@ async function main() {
     'resetDb 清空所有业务表',
   )
   assert(afterReset.liveInterview === null, 'resetDb 同时清空 liveInterview 快照')
+  assert((await schema.listLlmCalls(db)).length === 0, 'resetDb 同时清空调用记录')
 
   // 旧 localStorage 一次性迁移（DB 为空时导入，导入后删除键）
   const legacy = {

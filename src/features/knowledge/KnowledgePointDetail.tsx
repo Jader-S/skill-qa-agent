@@ -45,10 +45,16 @@ export default function KnowledgePointDetail({
   }
 
   const save = () => {
+    const nextContent = content.trim()
+    const edited = kp.sourceType === 'ai' && nextContent !== kp.content.trim()
+    const sourceName = edited
+      ? `${(kp.sourceName ?? '').replace(/ · 已编辑$/, '')} · 已编辑`.replace(/^ · /, '')
+      : kp.sourceName
     updateKP(kp.id, {
       title: title.trim() || kp.title,
-      content: content.trim(),
+      content: nextContent,
       tags: tags.split(/[,，\s]+/).filter(Boolean),
+      ...(edited ? { sourceName } : {}),
     })
     const nextAi = ai.trim()
     if (nextAi !== (kp.aiContent ?? '').trim()) optimizeKP(kp.id, nextAi)

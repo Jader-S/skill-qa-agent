@@ -2,18 +2,21 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore } from './store/useStore'
 import { getLastBackupAt } from './lib/autoBackup'
 import { isDesktop } from './lib/desktop'
+import { cancelOptimizeSession, useOptimizeSession } from './lib/optimizeSession'
 import CourseTree from './features/courses/CourseTree'
 import KnowledgeView from './features/knowledge/KnowledgeView'
 import SelfTestView from './features/selfTest/SelfTestView'
 import InterviewView from './features/interview/InterviewView'
 import SettingsView from './features/settings/SettingsView'
+import WrongBookView from './features/wrong/WrongBookView'
 
-type Tab = 'knowledge' | 'selftest' | 'interview' | 'settings'
+type Tab = 'knowledge' | 'selftest' | 'interview' | 'wrong' | 'settings'
 
 const NAV: { key: Tab; label: string }[] = [
   { key: 'knowledge', label: '知识点' },
   { key: 'selftest', label: '自测' },
   { key: 'interview', label: '模拟面试' },
+  { key: 'wrong', label: '错题本' },
   { key: 'settings', label: '设置' },
 ]
 
@@ -33,6 +36,7 @@ export default function App() {
   })
   const draggingRef = useRef(false)
   const hydrated = useStore((s) => s.hydrated)
+  const optimizing = useOptimizeSession()
   const courseCount = useStore((s) => s.courses.length)
   const kpCount = useStore((s) => s.knowledgePoints.length)
 
@@ -117,10 +121,31 @@ export default function App() {
               {n.label}
             </div>
           ))}
+          {optimizing.running && (
+            <div
+              className="tab"
+              style={{ marginLeft: 'auto', color: 'var(--accent-2)' }}
+              title="补充仍在进行。点击回到知识点，进度不会因切换页面消失。"
+              onClick={() => setTab('knowledge')}
+            >
+              AI 补充中 {optimizing.done}/{optimizing.total}
+              {optimizing.current ? ` · ${optimizing.current}` : ''}
+              <button
+                className="mini danger"
+                style={{ marginLeft: 8 }}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  cancelOptimizeSession()
+                }}
+              >
+                停止
+              </button>
+            </div>
+          )}
           {staleBackup && (
             <div
               className="tab"
-              style={{ marginLeft: 'auto', color: 'var(--warn)', borderColor: 'var(--warn)' }}
+              style={{ marginLeft: optimizing.running ? 0 : 'auto', color: 'var(--warn)', borderColor: 'var(--warn)' }}
               title={
                 isDesktop()
                   ? '超过 7 天没有做 JSON 备份。数据库文件还在，但建议再导出一份。'
@@ -135,6 +160,9 @@ export default function App() {
         {tab === 'knowledge' && <KnowledgeView courseId={selectedCourseId} onNavigateCourse={setSelectedCourseId} />}
         {tab === 'selftest' && <SelfTestView courseId={selectedCourseId} />}
         {tab === 'interview' && <InterviewView courseId={selectedCourseId} />}
+        {tab === 'wrong' && (
+          <WrongBookView courseId={selectedCourseId} onPractice={(kind) => setTab(kind === 'quiz' ? 'selftest' : 'interview')} />
+        )}
         {tab === 'settings' && <SettingsView />}
       </main>
     </div>

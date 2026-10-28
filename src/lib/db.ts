@@ -10,6 +10,7 @@ import {
   readApiKey,
   rememberApiKey,
 } from './desktop'
+import { bumpUsageTick } from './llmUsage'
 
 /**
  * 数据库适配层。
@@ -135,11 +136,39 @@ export async function loadAll(): Promise<AppState> {
       answers: [],
       corrections: [],
       interviewSessions: [],
+      masteredWrongIds: [],
       settings: { provider: 'deepseek', baseURL: '', apiKey: '', model: '', useMock: true },
       voice: { lang: 'zh-CN' },
     }
   }
   return unsealSettings(await schema.loadAll(database))
+}
+
+let persistTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 用量是追加写入，不走整库 sync。网页版把字节再刷回 IndexedDB。 */
+function scheduleUsagePersist() {
+  if (isDesktop() || !database) return
+  if (persistTimer) clearTimeout(persistTimer)
+  persistTimer = setTimeout(() => {
+    persistTimer = null
+    if (!database) return
+    void idbSet(DB_KEY, database.export()).catch(() => {})
+  }, 400)
+}
+
+export async function recordLlmCall(row: schema.LlmCallRow): Promise<void> {
+  await openDb()
+  if (!database) return
+  await schema.insertLlmCall(database, row)
+  scheduleUsagePersist()
+  bumpUsageTick()
+}
+
+export async function listLlmCalls(since = 0): Promise<schema.LlmCallRow[]> {
+  await openDb()
+  if (!database) return []
+  return schema.listLlmCalls(database, since)
 }
 
 /** 重置：清空所有业务表。 */

@@ -12,7 +12,7 @@ export type KnowledgePoint = {
   title: string
   content: string // markdown：笔记原文（AI 优化时永不改动）
   tags: string[]
-  sourceType: 'manual' | 'md' | 'json' | 'txt' | 'docx' | 'pptx' | 'pdf'
+  sourceType: 'manual' | 'md' | 'json' | 'txt' | 'docx' | 'pptx' | 'pdf' | 'ai'
   sourceName?: string
   /** AI 补充与拓展（独立于原文），可单独清除 / 重新生成。 */
   aiContent?: string
@@ -35,6 +35,14 @@ export type Question = {
   createdAt: number
 }
 
+/** 低于 60 分时和评分一起返回的丢分解析。 */
+export type AttemptAnalysis = {
+  lossPoints: { point: string; why: string }[]
+  explanation: string
+  complexity: 'simple' | 'complex'
+  references: { title: string; url: string }[]
+}
+
 export type AnswerRecord = {
   id: string
   questionId: string
@@ -43,6 +51,7 @@ export type AnswerRecord = {
   correct: boolean
   feedback: string
   weakPoints?: string[]
+  analysis?: AttemptAnalysis
   createdAt: number
 }
 
@@ -64,6 +73,9 @@ export type InterviewRound = {
   score: number
   feedback: string
   weakPoints?: string[]
+  /** 出题时检索到的知识点。旧记录可能没有。 */
+  kpIds?: string[]
+  analysis?: AttemptAnalysis
 }
 
 /** 模拟面试：终轮评估报告。 */
@@ -96,7 +108,7 @@ export type LiveInterview = {
   rounds: number
   scope: string
   scopeName: string
-  current: { question: string; intent: string; reference: string } | null
+  current: { question: string; intent: string; reference: string; kpIds?: string[] } | null
   history: InterviewRound[]
   roundIdx: number
   report: InterviewReport | null
@@ -127,6 +139,8 @@ export type AppState = {
   answers: AnswerRecord[]
   corrections: Correction[]
   interviewSessions: InterviewSession[]
+  /** 已移出错题本、但仍可在「已掌握」里看到的作答 id 或「面试会话:轮次」。 */
+  masteredWrongIds: string[]
   settings: LLMConfig
   voice: VoiceSettings
   /** 进行中的面试快照（可空；不纳入整库备份，仅本地自动保存）。 */

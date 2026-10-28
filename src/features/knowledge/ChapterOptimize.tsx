@@ -1,13 +1,14 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useStore } from '../../store/useStore'
-import { runBatchOptimize } from '../../lib/batchOptimize'
+import { optimizeSkipReason } from '../../lib/batchOptimize'
+import { cancelOptimizeSession, startOptimizeSession, useOptimizeSession } from '../../lib/optimizeSession'
 import type { KnowledgePoint } from '../../types'
 
 /**
  * 章节级「一键 AI 整理补充」：
  * - 对当前作用域内的全部知识点批量生成 AI 补充与拓展（原文不动，只写 aiContent）。
- * - 固定并发 + 失败隔离 + 实时进度 + 可随时取消。
- * - 默认跳过已有 AI 补充的知识点，支持「重跑全部」。
+ * - 固定并发 + 失败隔离 + 实时进度 + 可随时取消。进度放在页面外，切换 Tab 后仍可见。
+ * - 默认跳过已有真实补充；Mock 占位默认重新生成。取消「跳过已有补充」则整批重跑，含 Mock。
  */
 export default function ChapterOptimize({
   kps,
@@ -17,58 +18,21 @@ export default function ChapterOptimize({
   scopeLabel: string
 }) {
   const settings = useStore((s) => s.settings)
-  const optimizeKP = useStore((s) => s.optimizeKP)
+  const session = useOptimizeSession()
 
-  const [running, setRunning] = useState(false)
-  const [done, setDone] = useState(0)
-  const [total, setTotal] = useState(0)
-  const [current, setCurrent] = useState('')
   const [skipOptimized, setSkipOptimized] = useState(true)
-  const [summary, setSummary] = useState<string | null>(null)
-  const [errCount, setErrCount] = useState(0)
-  const abortRef = useRef<AbortController | null>(null)
+  const [redoMock, setRedoMock] = useState(true)
 
-  const pending = skipOptimized ? kps.filter((k) => !k.aiContent).length : kps.length
+  const skipMock = skipOptimized && !redoMock
+  const pending = kps.filter(
+    (k) => optimizeSkipReason(k, { skipOptimized, skipMock }) === null,
+  ).length
+  const { running, done, total, current, errCount, summary } = session
 
-  const start = async () => {
+  const start = () => {
     if (kps.length === 0 || running) return
-    const ac = new AbortController()
-    abortRef.current = ac
-    setRunning(true)
-    setSummary(null)
-    setErrCount(0)
-    setDone(0)
-    setTotal(pending)
-    setCurrent('')
-
-    const res = await runBatchOptimize({
-      settings,
-      kps,
-      concurrency: 2,
-      skipOptimized,
-      signal: ac.signal,
-      onProgress: (d, t, kp) => {
-        setDone(d)
-        setTotal(t)
-        if (kp) setCurrent(kp.title)
-      },
-      onItem: (kp, ai, err) => {
-        if (ai) optimizeKP(kp.id, ai)
-        else if (err) setErrCount((n) => n + 1)
-      },
-    })
-
-    setRunning(false)
-    setCurrent('')
-    setSummary(
-      (res.aborted ? '已取消 · ' : '完成 · ') +
-        `成功 ${res.success}` +
-        (res.failed ? ` · 失败 ${res.failed}` : '') +
-        (res.skipped ? ` · 跳过已补充 ${res.skipped}` : ''),
-    )
+    startOptimizeSession({ settings, kps, skipOptimized, skipMock, scopeLabel })
   }
-
-  const cancel = () => abortRef.current?.abort()
 
   return (
     <div className="chapter-optimize">
@@ -76,7 +40,7 @@ export default function ChapterOptimize({
         <label
           className="muted"
           style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
-          title="勾选后跳过已生成 AI 补充的知识点"
+          title="勾选后跳过已经由真实模型写过的补充。Mock 占位不在此列。"
         >
           <input
             type="checkbox"
@@ -87,6 +51,20 @@ export default function ChapterOptimize({
           />
           跳过已有补充
         </label>
+        <label
+          className="muted"
+          style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+          title="勾选后，离线 Mock 占位会按当前模型重新生成。取消「跳过已有补充」时也会重做 Mock。"
+        >
+          <input
+            type="checkbox"
+            checked={!skipOptimized || redoMock}
+            disabled={running || !skipOptimized}
+            onChange={(e) => setRedoMock(e.target.checked)}
+            style={{ width: 'auto' }}
+          />
+          重新生成 Mock 补充
+        </label>
         {!running ? (
           <button
             className="accent-2"
@@ -94,20 +72,20 @@ export default function ChapterOptimize({
             disabled={pending === 0}
             title={
               pending === 0
-                ? '该作用域内的知识点都已有 AI 补充（可取消勾选「跳过已有补充」重跑）'
-                : '基于笔记原文，为每个知识点生成 AI 补充与拓展'
+                ? '没有待整理的知识点。取消「跳过已有补充」可重跑真实补充；勾选「重新生成 Mock 补充」可重做离线占位。'
+                : '基于笔记原文生成补充。已有真实补充可跳过，Mock 占位可整批重做。'
             }
           >
             ✨ 一键 AI 整理补充（{scopeLabel} {pending} 个）
           </button>
         ) : (
-          <button className="danger" onClick={cancel}>
+          <button className="danger" onClick={cancelOptimizeSession}>
             停止
           </button>
         )}
       </div>
 
-      {(running || summary) && (
+      {(running || summary || (settings.useMock && pending > 0)) && (
         <div style={{ marginTop: 8, minWidth: 240 }}>
           {running && (
             <>
@@ -123,6 +101,11 @@ export default function ChapterOptimize({
                 />
               </div>
             </>
+          )}
+          {!running && settings.useMock && pending > 0 && (
+            <div className="muted" style={{ fontSize: 12, marginBottom: summary ? 4 : 0 }}>
+              当前是 Mock 离线模式，批量结果仍是占位文案。要换成真实补充，请先在「设置」里关闭 Mock。
+            </div>
           )}
           {!running && summary && (
             <div className="muted" style={{ fontSize: 12 }}>{summary}</div>

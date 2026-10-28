@@ -16,24 +16,36 @@ export function createOpenAICompatibleProvider(
     label,
     async *streamChat(messages, opts) {
       const base = cfg.baseURL.replace(/\/+$/, '')
-      const res = await fetch(`${base}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
-        },
-        body: JSON.stringify({
-          model: cfg.model,
-          messages,
-          stream: true,
-          temperature: 0.3,
-        }),
-        signal: opts?.signal,
-      })
-
-      if (!res.ok || !res.body) {
+      let includeUsage = true
+      let res: Response | null = null
+      for (let attempt = 0; attempt < 2; attempt++) {
+        res = await fetch(`${base}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
+          },
+          body: JSON.stringify({
+            model: cfg.model,
+            messages,
+            stream: true,
+            temperature: 0.3,
+            ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
+          }),
+          signal: opts?.signal,
+        })
+        if (res.ok && res.body) break
         const text = await res.text().catch(() => '')
+        const rejectedUsage =
+          includeUsage && res.status === 400 && /stream_options|include_usage/i.test(text)
+        if (rejectedUsage) {
+          includeUsage = false
+          continue
+        }
         throw new Error(`LLM 请求失败 (${res.status}): ${text.slice(0, 200)}`)
+      }
+      if (!res?.ok || !res.body) {
+        throw new Error('LLM 请求失败')
       }
 
       const reader = res.body.getReader()
@@ -52,6 +64,17 @@ export function createOpenAICompatibleProvider(
           if (data === '[DONE]') return
           try {
             const json = JSON.parse(data)
+            const usage = json.usage
+            if (usage) {
+              const prompt = usage.prompt_tokens ?? usage.input_tokens
+              const completion = usage.completion_tokens ?? usage.output_tokens
+              if (typeof prompt === 'number' || typeof completion === 'number') {
+                opts?.onUsage?.({
+                  promptTokens: Number(prompt) || 0,
+                  completionTokens: Number(completion) || 0,
+                })
+              }
+            }
             const delta: string | undefined = json.choices?.[0]?.delta?.content
             if (delta) yield delta
           } catch {

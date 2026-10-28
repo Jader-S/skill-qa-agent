@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS answers (
   correct INTEGER NOT NULL,
   feedback TEXT NOT NULL,
   weak_points TEXT,
+  analysis TEXT,
   created_at INTEGER NOT NULL
 );
 
@@ -94,6 +95,21 @@ CREATE TABLE IF NOT EXISTS kv (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS llm_calls (
+  id TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL,
+  task TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  status TEXT NOT NULL,
+  prompt_tokens INTEGER NOT NULL,
+  completion_tokens INTEGER NOT NULL,
+  estimated INTEGER NOT NULL,
+  duration_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_calls_created ON llm_calls(created_at);
 `
 
 export async function migrate(db: any): Promise<void> {
@@ -106,6 +122,10 @@ export async function migrate(db: any): Promise<void> {
     await db.run('ALTER TABLE knowledge_points ADD COLUMN ai_content TEXT NOT NULL DEFAULT \'\'')
   if (!has('ai_optimized_at'))
     await db.run('ALTER TABLE knowledge_points ADD COLUMN ai_optimized_at INTEGER')
+  const answerCols = await db.exec('PRAGMA table_info(answers)')
+  const answerHas = (name: string) =>
+    answerCols.length > 0 && answerCols[0].values.some((v: any[]) => v[1] === name)
+  if (!answerHas('analysis')) await db.run('ALTER TABLE answers ADD COLUMN analysis TEXT')
 }
 
 /** 把 sql.js exec 的结果集转成行对象数组。 */
@@ -183,7 +203,7 @@ export async function syncAll(db: any, state: AppState): Promise<void> {
     await db.run('DELETE FROM answers')
     for (const a of state.answers) {
       await db.run(
-        'INSERT INTO answers (id,question_id,user_answer,score,correct,feedback,weak_points,created_at) VALUES (?,?,?,?,?,?,?,?)',
+        'INSERT INTO answers (id,question_id,user_answer,score,correct,feedback,weak_points,analysis,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
         [
           a.id,
           a.questionId,
@@ -192,6 +212,7 @@ export async function syncAll(db: any, state: AppState): Promise<void> {
           a.correct ? 1 : 0,
           a.feedback,
           a.weakPoints ? JSON.stringify(a.weakPoints) : null,
+          a.analysis ? JSON.stringify(a.analysis) : null,
           a.createdAt,
         ],
       )
@@ -231,6 +252,10 @@ export async function syncAll(db: any, state: AppState): Promise<void> {
         JSON.stringify(state.liveInterview),
       ])
     }
+    await db.run('INSERT INTO kv (key,value) VALUES (?,?)', [
+      'mastered_wrongs',
+      JSON.stringify(state.masteredWrongIds ?? []),
+    ])
 
     await db.run('COMMIT')
   } catch (e) {
@@ -283,6 +308,7 @@ export async function loadAll(db: any): Promise<AppState> {
     correct: Number(r.correct) === 1,
     feedback: r.feedback,
     weakPoints: r.weak_points ? jsonOr<string[] | undefined>(r.weak_points, undefined) : undefined,
+    analysis: r.analysis ? jsonOr(r.analysis, undefined) : undefined,
     createdAt: Number(r.created_at),
   }))
 
@@ -327,6 +353,7 @@ export async function loadAll(db: any): Promise<AppState> {
   const liveInterview: LiveInterview | null = kv.live_interview
     ? jsonOr<LiveInterview | null>(kv.live_interview, null)
     : null
+  const masteredWrongIds = kv.mastered_wrongs ? jsonOr<string[]>(kv.mastered_wrongs, []) : []
 
   return {
     courses,
@@ -335,6 +362,7 @@ export async function loadAll(db: any): Promise<AppState> {
     answers,
     corrections,
     interviewSessions,
+    masteredWrongIds,
     liveInterview,
     settings: settings ?? {
       provider: 'deepseek',
@@ -359,6 +387,7 @@ export async function resetDb(db: any): Promise<void> {
       'corrections',
       'interview_sessions',
       'kv',
+      'llm_calls',
     ]) {
       await db.run(`DELETE FROM ${t}`)
     }
@@ -367,6 +396,56 @@ export async function resetDb(db: any): Promise<void> {
     await db.run('ROLLBACK')
     throw e
   }
+}
+
+export type LlmCallRow = {
+  id: string
+  createdAt: number
+  task: string
+  provider: string
+  model: string
+  status: string
+  promptTokens: number
+  completionTokens: number
+  estimated: boolean
+  durationMs: number
+}
+
+export async function insertLlmCall(db: any, row: LlmCallRow): Promise<void> {
+  await db.run(
+    `INSERT INTO llm_calls (id,created_at,task,provider,model,status,prompt_tokens,completion_tokens,estimated,duration_ms)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    [
+      row.id,
+      row.createdAt,
+      row.task,
+      row.provider,
+      row.model,
+      row.status,
+      row.promptTokens,
+      row.completionTokens,
+      row.estimated ? 1 : 0,
+      row.durationMs,
+    ],
+  )
+}
+
+export async function listLlmCalls(db: any, since = 0): Promise<LlmCallRow[]> {
+  const all = await rows(db, 'SELECT * FROM llm_calls ORDER BY created_at ASC')
+  return all
+    .filter((r) => Number(r.created_at) >= since)
+    .map((r) => ({
+      id: String(r.id),
+      createdAt: Number(r.created_at),
+      task: String(r.task),
+      provider: String(r.provider),
+      model: String(r.model),
+      status: String(r.status),
+      promptTokens: Number(r.prompt_tokens) || 0,
+      completionTokens: Number(r.completion_tokens) || 0,
+      estimated: Number(r.estimated) === 1,
+      durationMs: Number(r.duration_ms) || 0,
+    }))
 }
 
 /**
@@ -391,6 +470,7 @@ export async function migrateFromLocalStorage(db: any): Promise<void> {
       answers: saved.answers ?? [],
       corrections: saved.corrections ?? [],
       interviewSessions: saved.interviewSessions ?? [],
+      masteredWrongIds: saved.masteredWrongIds ?? [],
       settings: saved.settings ?? {
         provider: 'deepseek',
         baseURL: '',

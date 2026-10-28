@@ -12,6 +12,9 @@ import { LexicalRetriever, chunksToContext, type RetrievedChunk } from '../../li
 import { downloadMarkdown } from '../../lib/exportObsidian'
 import { speech } from '../../lib/speech'
 import type { InterviewRound, InterviewReport, KnowledgePoint } from '../../types'
+import { normalizeAnalysis } from '../../lib/analysis'
+import AnalysisView from '../shared/AnalysisView'
+import { clearDrill, useDrill } from '../../lib/drill'
 
 type Phase = 'config' | 'running' | 'done'
 
@@ -33,7 +36,8 @@ export default function InterviewView({ courseId = null }: { courseId?: string |
   const [rounds, setRounds] = useState(snap?.rounds ?? 5)
   const [phase, setPhase] = useState<Phase>(snap?.phase ?? 'config')
 
-  const [current, setCurrent] = useState<{ question: string; intent: string; reference: string } | null>(
+  const drill = useDrill()
+  const [current, setCurrent] = useState<{ question: string; intent: string; reference: string; kpIds?: string[] } | null>(
     snap?.current ?? null,
   )
   const [answer, setAnswer] = useState('')
@@ -102,9 +106,11 @@ export default function InterviewView({ courseId = null }: { courseId?: string |
 
   const start = () => {
     const kps =
-      scope === 'all'
-        ? allKps
-        : allKps.filter((k) => subtreeIds(courses, scope).includes(k.courseId))
+      drill?.kind === 'interview'
+        ? allKps.filter((k) => drill.kpIds.includes(k.id))
+        : scope === 'all'
+          ? allKps
+          : allKps.filter((k) => subtreeIds(courses, scope).includes(k.courseId))
     if (kps.length === 0) {
       alert('所选范围下没有知识点，请先导入或选择其他范围。')
       return
@@ -165,7 +171,12 @@ export default function InterviewView({ courseId = null }: { courseId?: string |
         'interview_q',
       )
       const q = extractJson<{ question: string; intent: string; reference: string }>(out)
-      setCurrent({ question: q.question, intent: q.intent || intent, reference: q.reference })
+      setCurrent({
+        question: q.question,
+        intent: q.intent || intent,
+        reference: q.reference,
+        kpIds: chunks.map((chunk) => chunk.kpId),
+      })
     } catch (e: any) {
       setStreaming('出题失败：' + e.message)
     } finally {
@@ -200,6 +211,8 @@ export default function InterviewView({ courseId = null }: { courseId?: string |
         score: r.score,
         feedback: r.feedback,
         weakPoints: r.weakPoints,
+        kpIds: current.kpIds,
+        analysis: normalizeAnalysis(r, Number(r.score)),
       }
       const nextHistory = [...history, round]
       setHistory(nextHistory)
@@ -273,6 +286,12 @@ export default function InterviewView({ courseId = null }: { courseId?: string |
     return (
       <div>
         <h2 className="page-title">模拟面试</h2>
+        {drill?.kind === 'interview' && (
+          <div className="row" style={{ marginBottom: 8 }}>
+            <span className="badge fix">本次只考错题本里的 {drill.kpIds.length} 个知识点</span>
+            <button className="mini" onClick={clearDrill}>退出再练</button>
+          </div>
+        )}
         <div className="panel" style={{ maxWidth: 560 }}>
           <div className="muted" style={{ marginBottom: 10 }}>
             基于你的本地知识库，按岗位进行多轮模拟面试：每轮检索相关知识点出题 → 你作答 → 评分反馈 → 末轮整体评估。
@@ -467,6 +486,7 @@ function RoundCard({ h, index }: { h: InterviewRound; index: number }) {
                 薄弱点：{h.weakPoints.join('、')}
               </div>
             )}
+            {h.score < 60 && <AnalysisView analysis={h.analysis} />}
           </div>
         </>
       )}
